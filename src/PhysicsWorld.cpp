@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 static Vector2D clampLen(const Vector2D& v, double maxLen) {
     const double len = std::sqrt(v.x * v.x + v.y * v.y);
@@ -21,39 +22,78 @@ static Vector2D clampLen(const Vector2D& v, double maxLen) {
     return {v.x * s, v.y * s};
 }
 
-// The monitor whose box a body should currently be walled/floored against,
-// for monitor_traversal. Real monitor arrangements aren't a single seamless
-// rectangle — they can differ in height, have gaps, or be offset — so a
-// single "combined" box gives the wrong floor for any monitor shorter than
-// the tallest one in the layout. Instead: whichever enabled monitor's box
-// contains `point` wins outright (that's simply "the monitor this window is
-// over," floor and walls included); if the point is in a gap between
-// monitors, fall back to the nearest one so a body doesn't fall forever.
-static bool monitorBoxAt(const Vector2D& point, CBox& out) {
-    bool   found    = false;
-    double bestDist = 0.0;
+// monitor_traversal needs the *walkable extent* along each axis, not a
+// single monitor's box: a whole-box lookup (whichever monitor contains the
+// window) makes a body's own edge its own wall, so it can approach a shared
+// seam but never actually cross it — the clamp that stops it exiting its
+// current monitor never lets its center reach the neighbor's box in the
+// first place. Splitting the two axes fixes that: the left/right extent
+// comes from every monitor that shares this row (touching/overlapping
+// monitors merged into one run), so a body walks straight over the seam
+// between them, while the top/bottom extent still comes from whichever
+// monitor is actually under it — so a shorter neighbor still gets its own
+// floor instead of inheriting the tallest monitor's.
+struct SSpan {
+    double lo = 0.0, hi = 0.0;
+};
 
-    for (const auto& m : g_pCompositor->m_monitors) {
-        if (!m->m_enabled)
-            continue;
+// Merges touching/overlapping spans into contiguous runs, then returns the
+// run containing `at` — or, if `at` falls in a gap between runs, whichever
+// run is nearest, so a body crossing a gap still has something to land on.
+static SSpan resolveSpan(std::vector<SSpan> spans, double at) {
+    std::sort(spans.begin(), spans.end(), [](const SSpan& a, const SSpan& b) { return a.lo < b.lo; });
 
-        const CBox box{m->m_position, m->m_size};
-        if (point.x >= box.x && point.x <= box.x + box.w && point.y >= box.y && point.y <= box.y + box.h) {
-            out = box;
-            return true;
-        }
-
-        const double cx   = std::clamp(point.x, box.x, box.x + box.w);
-        const double cy   = std::clamp(point.y, box.y, box.y + box.h);
-        const double dist = (Vector2D{cx, cy} - point).size();
-        if (!found || dist < bestDist) {
-            found    = true;
-            bestDist = dist;
-            out      = box;
-        }
+    constexpr double EPS = 1.0; // covers rounding noise in monitor placement
+    std::vector<SSpan> merged;
+    for (const auto& s : spans) {
+        if (!merged.empty() && s.lo <= merged.back().hi + EPS)
+            merged.back().hi = std::max(merged.back().hi, s.hi);
+        else
+            merged.push_back(s);
     }
 
-    return found;
+    SSpan  best     = merged.front();
+    double bestDist = std::numeric_limits<double>::max();
+    for (const auto& s : merged) {
+        if (at >= s.lo && at <= s.hi)
+            return s;
+        const double dist = std::min(std::fabs(at - s.lo), std::fabs(at - s.hi));
+        if (dist < bestDist) {
+            bestDist = dist;
+            best     = s;
+        }
+    }
+    return best;
+}
+
+// Left/right walls: the merged x-span of every enabled monitor whose y-range
+// contains `y` — i.e. every screen forming one contiguous row at this height.
+static bool monitorRowSpan(double y, double x, SSpan& out) {
+    std::vector<SSpan> spans;
+    for (const auto& m : g_pCompositor->m_monitors) {
+        if (!m->m_enabled || y < m->m_position.y || y > m->m_position.y + m->m_size.y)
+            continue;
+        spans.push_back({m->m_position.x, m->m_position.x + m->m_size.x});
+    }
+    if (spans.empty())
+        return false;
+    out = resolveSpan(std::move(spans), x);
+    return true;
+}
+
+// Top/bottom (ceiling/floor): the merged y-span of every enabled monitor
+// whose x-range contains `x` — the contiguous column of screens below/above.
+static bool monitorColumnSpan(double x, double y, SSpan& out) {
+    std::vector<SSpan> spans;
+    for (const auto& m : g_pCompositor->m_monitors) {
+        if (!m->m_enabled || x < m->m_position.x || x > m->m_position.x + m->m_size.x)
+            continue;
+        spans.push_back({m->m_position.y, m->m_position.y + m->m_size.y});
+    }
+    if (spans.empty())
+        return false;
+    out = resolveSpan(std::move(spans), y);
+    return true;
 }
 
 // Ground truth, not a heuristic: is the user *right now* interactively
@@ -185,17 +225,24 @@ bool CPhysicsWorld::resolveBounds(SPhysicsBody& body, Vector2D& pos, const Vecto
         return false;
 
     const auto restitution = std::clamp((double)g_config.restitution->value(), 0.0, 1.0);
+    const Vector2D center  = pos + size * 0.5;
 
-    CBox wallsBox;
-    if (!g_config.monitorTraversal->value() || !monitorBoxAt(pos + size * 0.5, wallsBox)) {
+    SSpan row, column;
+    const bool traverse = g_config.monitorTraversal->value() && monitorRowSpan(center.y, center.x, row) && monitorColumnSpan(center.x, center.y, column);
+
+    double left, top, right, bottom;
+    if (traverse) {
+        left   = row.lo;
+        right  = row.hi - size.x;
+        top    = column.lo;
+        bottom = column.hi - size.y;
+    } else {
         const auto monitor = window->m_monitor.lock();
-        wallsBox           = CBox{monitor->m_position, monitor->m_size};
+        left               = monitor->m_position.x;
+        top                = monitor->m_position.y;
+        right              = monitor->m_position.x + monitor->m_size.x - size.x;
+        bottom             = monitor->m_position.y + monitor->m_size.y - size.y;
     }
-
-    const double left   = wallsBox.x;
-    const double top    = wallsBox.y;
-    const double right  = wallsBox.x + wallsBox.w - size.x;
-    const double bottom = wallsBox.y + wallsBox.h - size.y;
 
     if (pos.x < left) {
         pos.x           = left;
