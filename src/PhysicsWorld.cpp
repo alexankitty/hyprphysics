@@ -41,6 +41,24 @@ static bool isInteractivelyControlled(const PHLWINDOW& window) {
     return windowTarget && windowTarget->window() == window;
 }
 
+// Move a floating window through the layout system rather than poking
+// m_realPosition directly. Hyprland's drag controller computes where to pick
+// a window up from its layout target's *own* cached box (ITarget::position(),
+// separate from m_realPosition), and only setTargetGeom()/setPositionGlobal()
+// keep that cache in sync. Writing m_realPosition alone left that cache
+// stale, so grabbing a window that physics had moved would jump it back to
+// wherever it was last positioned "properly" (plus the mouse delta) — the
+// large-displacement-on-grab bug.
+static void moveWindowTo(const PHLWINDOW& window, const Vector2D& pos, const Vector2D& size) {
+    if (!window->m_target) {
+        window->m_realPosition->setValueAndWarp(pos);
+        return;
+    }
+
+    g_layoutManager->setTargetGeom(CBox{pos, size}, window->m_target);
+    window->m_realPosition->warp(); // physics recomputes every tick; skip the move-animation curve
+}
+
 bool CPhysicsWorld::eligible(const PHLWINDOW& window) const {
     if (!window || !validMapped(window))
         return false;
@@ -210,11 +228,11 @@ void CPhysicsWorld::resolvePairs(double dt) {
             const Vector2D newPosB = posB - normal * (push * shareB);
 
             if (!a.grabbed) {
-                wa->m_realPosition->setValueAndWarp(newPosA);
+                moveWindowTo(wa, newPosA, sizeA);
                 a.lastKnownPos = newPosA;
             }
             if (!b.grabbed) {
-                wb->m_realPosition->setValueAndWarp(newPosB);
+                moveWindowTo(wb, newPosB, sizeB);
                 b.lastKnownPos = newPosB;
             }
 
@@ -330,7 +348,7 @@ void CPhysicsWorld::step() {
         resolveBounds(body, newPos, size);
 
         if (newPos != goalPos)
-            window->m_realPosition->setValueAndWarp(newPos);
+            moveWindowTo(window, newPos, size);
         body.lastKnownPos = newPos;
 
         if (body.velocity.size() < sleepVel)
