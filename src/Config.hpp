@@ -19,6 +19,11 @@ struct SPhysicsConfig {
     SP<Config::Values::CFloatValue> maxVelocity;     // px/s clamp
     SP<Config::Values::CFloatValue> sleepVelocity;    // px/s, below + resting = sleep
     SP<Config::Values::CFloatValue> grabReleaseTicks; // ticks of stillness before "released"
+
+    SP<Config::Values::CBoolValue>  spin;               // master switch for rotation
+    SP<Config::Values::CFloatValue> spinFactor;          // how much tangential impact speed becomes rad/s
+    SP<Config::Values::CFloatValue> maxAngularVelocity;  // rad/s clamp
+    SP<Config::Values::CFloatValue> angularFriction;     // 0..1 retained per second, mirrors friction
 };
 
 inline SPhysicsConfig g_config;

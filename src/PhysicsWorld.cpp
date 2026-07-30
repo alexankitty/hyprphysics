@@ -14,6 +14,18 @@
 #include <cmath>
 #include <limits>
 
+// Adds a tangential-impact torque, gated by the spin master switch and
+// clamped the same way linear velocity is. Signs are chosen for a plausible
+// "tumble in the direction of travel" look, not rigorous rigid-body physics —
+// there's no real contact-point offset to work from once a bounce is reduced
+// to a 1D axis flip or an overlap-resolution push.
+static void addSpin(SPhysicsBody& body, double tangentialSpeed) {
+    if (!g_config.spin->value())
+        return;
+    const double maxAngVel   = std::fabs(g_config.maxAngularVelocity->value());
+    body.angularVelocity     = std::clamp(body.angularVelocity + tangentialSpeed * g_config.spinFactor->value(), -maxAngVel, maxAngVel);
+}
+
 static Vector2D clampLen(const Vector2D& v, double maxLen) {
     const double len = std::sqrt(v.x * v.x + v.y * v.y);
     if (len <= maxLen || len <= 0.0001)
@@ -165,6 +177,16 @@ SPhysicsBody* CPhysicsWorld::find(PHLWINDOW window) {
     return nullptr;
 }
 
+bool CPhysicsWorld::visualTransform(PHLWINDOW window, Vector2D& subpixelOffset, double& angleRad) {
+    auto* b = find(window);
+    if (!b)
+        return false;
+
+    subpixelOffset = b->subpixelOffset;
+    angleRad       = b->angle;
+    return true;
+}
+
 void CPhysicsWorld::syncBody(PHLWINDOW window) {
     if (!window)
         return;
@@ -247,19 +269,23 @@ bool CPhysicsWorld::resolveBounds(SPhysicsBody& body, Vector2D& pos, const Vecto
     if (pos.x < left) {
         pos.x           = left;
         body.velocity.x = -body.velocity.x * restitution;
+        addSpin(body, body.velocity.y);
     } else if (pos.x > right) {
         pos.x           = right;
         body.velocity.x = -body.velocity.x * restitution;
+        addSpin(body, -body.velocity.y);
     }
 
     bool grounded = false;
     if (pos.y < top) {
         pos.y           = top;
         body.velocity.y = -body.velocity.y * restitution;
+        addSpin(body, -body.velocity.x);
     } else if (pos.y > bottom) {
         pos.y           = bottom;
         body.velocity.y = -body.velocity.y * restitution;
         grounded        = true;
+        addSpin(body, body.velocity.x);
 
         // resting on the floor: kill vertical jitter once it is basically zero
         if (std::fabs(body.velocity.y) < g_config.sleepVelocity->value())
@@ -348,6 +374,15 @@ void CPhysicsWorld::resolvePairs(double dt) {
                     a.velocity = a.velocity + normal * (impulse / massA);
                 if (!b.grabbed)
                     b.velocity = b.velocity - normal * (impulse / massB);
+
+                // slip along the contact (tangent to the normal) becomes spin —
+                // a glancing hit tumbles the windows, a head-on one doesn't
+                const Vector2D tangent          = {-normal.y, normal.x};
+                const double   tangentialRelVel = (a.velocity.x - b.velocity.x) * tangent.x + (a.velocity.y - b.velocity.y) * tangent.y;
+                if (!a.grabbed)
+                    addSpin(a, tangentialRelVel);
+                if (!b.grabbed)
+                    addSpin(b, -tangentialRelVel);
             }
 
             a.asleep = false;
@@ -372,12 +407,15 @@ void CPhysicsWorld::step() {
     if (!g_config.enabled->value() || !g_runtimeEnabled || dt <= 0.0)
         return;
 
-    const double gravity          = g_config.gravity->value();
-    const double frictionPerSec   = std::clamp((double)g_config.friction->value(), 0.0, 1.0);
-    const double frictionThisTick = std::pow(frictionPerSec, dt);
-    const double maxVel           = g_config.maxVelocity->value();
-    const double sleepVel         = g_config.sleepVelocity->value();
-    const int    releaseTicks     = std::max(1, (int)g_config.grabReleaseTicks->value());
+    const double gravity                 = g_config.gravity->value();
+    const double frictionPerSec          = std::clamp((double)g_config.friction->value(), 0.0, 1.0);
+    const double frictionThisTick        = std::pow(frictionPerSec, dt);
+    const double angularFrictionPerSec   = std::clamp((double)g_config.angularFriction->value(), 0.0, 1.0);
+    const double angularFrictionThisTick = std::pow(angularFrictionPerSec, dt);
+    const double maxVel                  = g_config.maxVelocity->value();
+    const double maxAngVel               = std::fabs(g_config.maxAngularVelocity->value());
+    const double sleepVel                = g_config.sleepVelocity->value();
+    const int    releaseTicks            = std::max(1, (int)g_config.grabReleaseTicks->value());
 
     // prune dead / no-longer-eligible bodies first
     std::erase_if(m_bodies, [&](SPhysicsBody& b) {
@@ -403,11 +441,16 @@ void CPhysicsWorld::step() {
             else if (!body.grabbed)
                 body.velocity = {0, 0}; // just picked up: don't inherit a stale throw
 
-            body.lastKnownPos  = goalPos;
-            body.lastKnownSize = size;
-            body.grabbed       = true;
-            body.idleTicks     = 0;
-            body.asleep        = false;
+            body.lastKnownPos    = goalPos;
+            body.lastKnownSize   = size;
+            body.grabbed         = true;
+            body.idleTicks       = 0;
+            body.asleep          = false;
+            // a window being carried by the user should look level and
+            // pixel-exact under the cursor, not visually offset from it
+            body.subpixelOffset  = {0, 0};
+            body.angle           = 0.0;
+            body.angularVelocity = 0.0;
             continue;
         }
 
@@ -426,11 +469,14 @@ void CPhysicsWorld::step() {
                 body.velocity = (goalPos - body.lastKnownPos) * (1.0 / dt);
             else if (externallyResized)
                 body.velocity = {0, 0}; // resizing in place: don't carry over stale velocity
-            body.lastKnownPos  = goalPos;
-            body.lastKnownSize = size;
-            body.grabbed       = true;
-            body.idleTicks     = 0;
-            body.asleep        = false;
+            body.lastKnownPos    = goalPos;
+            body.lastKnownSize   = size;
+            body.grabbed         = true;
+            body.idleTicks       = 0;
+            body.asleep          = false;
+            body.subpixelOffset  = {0, 0};
+            body.angle           = 0.0;
+            body.angularVelocity = 0.0;
             continue; // let the other actor keep driving this tick; we just watched
         }
 
@@ -453,6 +499,11 @@ void CPhysicsWorld::step() {
         body.velocity = body.velocity * frictionThisTick;
         body.velocity = clampLen(body.velocity, maxVel);
 
+        if (g_config.spin->value()) {
+            body.angularVelocity = std::clamp(body.angularVelocity * angularFrictionThisTick, -maxAngVel, maxAngVel);
+            body.angle += body.angularVelocity * dt;
+        }
+
         Vector2D newPos     = goalPos + body.velocity * dt;
         const bool grounded = resolveBounds(body, newPos, size);
         // Hyprland snaps window positions to whole pixels, so round before
@@ -460,14 +511,25 @@ void CPhysicsWorld::step() {
         // compositor reports back a rounded value next tick, and the
         // externallyMoved sub-pixel mismatch is misread as someone else
         // moving the window — causing a velocity/grabbed flip-flop (jiggle).
-        newPos = newPos.round();
+        // The fractional remainder isn't thrown away though — it's kept as a
+        // cosmetic nudge for the render hook, so motion still reads as
+        // continuous instead of snapping between integer pixels.
+        const Vector2D unroundedPos = newPos;
+        newPos                      = newPos.round();
+        body.subpixelOffset         = unroundedPos - newPos;
 
         if (newPos != goalPos)
             moveWindowTo(window, newPos, size);
         body.lastKnownPos = newPos;
 
-        if (grounded && body.velocity.size() < sleepVel)
+        if (grounded && body.velocity.size() < sleepVel) {
             body.asleep = true;
+            // come to rest level — a permanently tilted resting window would
+            // leave its (unrotated) click hitbox visibly mismatched forever,
+            // not just for the duration of a bounce/tumble
+            body.angle           = 0.0;
+            body.angularVelocity = 0.0;
+        }
     }
 
     resolvePairs(dt);

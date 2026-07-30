@@ -20,6 +20,15 @@ struct SPhysicsBody {
     int          idleTicks  = 0;     // ticks since the last external move/resize, while grabbed
     bool         asleep     = false; // resting on the floor / another window, velocity ~ 0
     bool         initialised = false;
+
+    // Purely cosmetic, render-hook-only state — never fed back into the
+    // written window position/goal, so it can't perturb the simulation or
+    // trip the externallyMoved detector. lastKnownPos/newPos stay pixel-
+    // rounded for that reason; subpixelOffset carries just the fractional
+    // remainder for the renderer to nudge the drawn box by.
+    Vector2D     subpixelOffset  = {0, 0}; // fractional px remainder, render-only
+    double       angle           = 0.0;    // radians, render-only
+    double       angularVelocity = 0.0;    // rad/s
 };
 
 class CPhysicsWorld {
@@ -43,6 +52,12 @@ class CPhysicsWorld {
     size_t bodyCount() const {
         return m_bodies.size();
     }
+
+    // Render-hook query: the current cosmetic nudge for a tracked window —
+    // fractional-pixel offset and rotation in radians. Returns false (and
+    // leaves the outputs untouched) if the window has no active body, so the
+    // hook can skip touching the renderer entirely for untracked windows.
+    bool visualTransform(PHLWINDOW window, Vector2D& subpixelOffset, double& angleRad);
 
   private:
     SPhysicsBody*                        find(PHLWINDOW window);

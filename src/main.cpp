@@ -10,6 +10,7 @@
 #include "../globals.hpp"
 #include "Config.hpp"
 #include "PhysicsWorld.hpp"
+#include "RenderHook.hpp"
 
 #include <sstream>
 
@@ -91,6 +92,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_config.grabReleaseTicks = makeShared<Config::Values::CFloatValue>("plugin:physics:grab_release_ticks", "ticks of stillness after a drag before gravity resumes", 2.F,
                                                                         Config::Values::SFloatValueOptions{.min = 1.F, .max = 60.F});
 
+    g_config.spin               = makeShared<Config::Values::CBoolValue>("plugin:physics:spin", "let impacts spin windows (cosmetic, rendered only)", true);
+    g_config.spinFactor         = makeShared<Config::Values::CFloatValue>("plugin:physics:spin_factor", "how much of a tangential impact becomes spin, rad/s per px/s", 0.002F,
+                                                                          Config::Values::SFloatValueOptions{.min = 0.F, .max = 1.F});
+    g_config.maxAngularVelocity = makeShared<Config::Values::CFloatValue>("plugin:physics:max_angular_velocity", "hard spin cap, rad/s", 8.F,
+                                                                          Config::Values::SFloatValueOptions{.min = 0.F, .max = 100.F});
+    g_config.angularFriction    = makeShared<Config::Values::CFloatValue>("plugin:physics:angular_friction", "spin retained per second, 0..1", 0.9F,
+                                                                          Config::Values::SFloatValueOptions{.min = 0.F, .max = 1.F});
+
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.enabled);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.collisions);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.affectTiled);
@@ -102,6 +111,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.maxVelocity);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.sleepVelocity);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.grabReleaseTicks);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_config.spin);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_config.spinFactor);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_config.maxAngularVelocity);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_config.angularFriction);
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "physics:throw", dispatchThrow);
     HyprlandAPI::addDispatcherV2(PHANDLE, "physics:toggle", dispatchToggle);
@@ -116,10 +129,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static auto P_DESTROY = Event::bus()->m_events.window.destroy.listen([&](PHLWINDOW w) { g_physicsWorld.removeBody(w); });
 
     rescanWindows();
+    initRenderHook();
 
     return {"hyprphysics", "Gravity, bouncing, and throwable windows for Hyprland", "Claude", "0.1"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    destroyRenderHook();
     g_physicsWorld.removeAll();
 }

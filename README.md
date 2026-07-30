@@ -80,6 +80,21 @@ either config language — set whichever one matches your `hyprland.conf` /
 | `max_velocity` | `6000` | Hard speed cap, px/s |
 | `sleep_velocity` | `12` | Below this speed a resting window stops simulating, px/s |
 | `grab_release_ticks` | `2` | Ticks of stillness after a drag before gravity resumes |
+| `spin` | `true` | Let impacts spin windows — cosmetic only, rendered via a hook into Hyprland's own rotation support |
+| `spin_factor` | `0.002` | How much of a tangential impact becomes spin, rad/s per px/s |
+| `max_angular_velocity` | `8` | Hard spin cap, rad/s |
+| `angular_friction` | `0.9` | Spin retained per second, 0..1 |
+
+Falling/bouncing/thrown windows also get free subpixel-accurate motion at
+render time — the position Hyprland stores stays pixel-rounded (so nothing
+else about window management changes), but the fractional remainder is
+applied as a cosmetic render-time nudge, same as rotation. Both ride on a
+hook into `renderWindow`; if that hook fails to attach (unlikely, but the API
+it uses isn't ABI-stable across Hyprland versions), the plugin logs a
+notification and falls back to physics-with-no-flourish rather than failing
+to load. Note that rotation is purely visual — a window's click/hit region
+doesn't rotate with it, so windows always settle back level once they come
+to rest.
 
 **hyprland.conf:**
 ```
