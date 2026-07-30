@@ -146,11 +146,15 @@ hyprctl dispatch physics:throw "0 -1200"
 - Collision response is a simple AABB/impulse model, not a real rigid-body
   solver — good enough for satisfying bounces, not for anything that needs
   to be physically exact.
-- `monitor_traversal` only relaxes the position bounds — it doesn't reassign
-  which monitor/workspace a window belongs to as it drifts across a seam.
-  Hyprland's own window-monitor tracking is workspace-driven, not
-  position-driven, so how a straddling window renders once it's mostly over
-  the neighboring screen depends on Hyprland itself, not this plugin.
+- `monitor_traversal` walls/floors a window against whichever monitor it's
+  currently over (falling into a gap between non-adjacent monitors falls
+  back to the nearest one), so floors are respected per-monitor even when
+  monitors differ in height or aren't aligned in a grid. It doesn't,
+  however, reassign which monitor/workspace a window belongs to as it
+  drifts across a seam — Hyprland's own window-monitor tracking is
+  workspace-driven, not position-driven, so how a straddling window renders
+  once it's mostly over the neighboring screen depends on Hyprland itself,
+  not this plugin.
 - This targets Hyprland's current (git `main`) plugin API. Plugin ABI is
   explicitly unstable between Hyprland releases, so you'll need to rebuild
   against the headers matching whatever Hyprland version you run — `hyprpm`

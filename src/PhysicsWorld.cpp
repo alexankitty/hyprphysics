@@ -21,29 +21,39 @@ static Vector2D clampLen(const Vector2D& v, double maxLen) {
     return {v.x * s, v.y * s};
 }
 
-// Bounding box spanning every enabled monitor, in absolute layout px. Used as
-// the "walls" instead of a single monitor's box when monitor_traversal lets
-// windows drift from one screen onto another.
-static bool combinedMonitorsBox(CBox& out) {
-    bool first = false;
+// The monitor whose box a body should currently be walled/floored against,
+// for monitor_traversal. Real monitor arrangements aren't a single seamless
+// rectangle — they can differ in height, have gaps, or be offset — so a
+// single "combined" box gives the wrong floor for any monitor shorter than
+// the tallest one in the layout. Instead: whichever enabled monitor's box
+// contains `point` wins outright (that's simply "the monitor this window is
+// over," floor and walls included); if the point is in a gap between
+// monitors, fall back to the nearest one so a body doesn't fall forever.
+static bool monitorBoxAt(const Vector2D& point, CBox& out) {
+    bool   found    = false;
+    double bestDist = 0.0;
+
     for (const auto& m : g_pCompositor->m_monitors) {
         if (!m->m_enabled)
             continue;
 
-        const Vector2D tl = m->m_position;
-        const Vector2D br = m->m_position + m->m_size;
-
-        if (!first) {
-            out   = CBox{tl, br - tl};
-            first = true;
-            continue;
+        const CBox box{m->m_position, m->m_size};
+        if (point.x >= box.x && point.x <= box.x + box.w && point.y >= box.y && point.y <= box.y + box.h) {
+            out = box;
+            return true;
         }
 
-        const Vector2D newTl = {std::min(out.x, tl.x), std::min(out.y, tl.y)};
-        const Vector2D newBr = {std::max(out.x + out.w, br.x), std::max(out.y + out.h, br.y)};
-        out                  = CBox{newTl, newBr - newTl};
+        const double cx   = std::clamp(point.x, box.x, box.x + box.w);
+        const double cy   = std::clamp(point.y, box.y, box.y + box.h);
+        const double dist = (Vector2D{cx, cy} - point).size();
+        if (!found || dist < bestDist) {
+            found    = true;
+            bestDist = dist;
+            out      = box;
+        }
     }
-    return first;
+
+    return found;
 }
 
 // Ground truth, not a heuristic: is the user *right now* interactively
@@ -177,7 +187,7 @@ bool CPhysicsWorld::resolveBounds(SPhysicsBody& body, Vector2D& pos, const Vecto
     const auto restitution = std::clamp((double)g_config.restitution->value(), 0.0, 1.0);
 
     CBox wallsBox;
-    if (!g_config.monitorTraversal->value() || !combinedMonitorsBox(wallsBox)) {
+    if (!g_config.monitorTraversal->value() || !monitorBoxAt(pos + size * 0.5, wallsBox)) {
         const auto monitor = window->m_monitor.lock();
         wallsBox           = CBox{monitor->m_position, monitor->m_size};
     }
