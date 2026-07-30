@@ -341,11 +341,16 @@ void CPhysicsWorld::step() {
             continue; // let the other actor keep driving this tick; we just watched
         }
 
+        // releaseTicks no longer holds gravity off: it only keeps the body
+        // exempt from collision push (see resolvePairs' shareA/shareB) for a
+        // couple of ticks right after a drag, in case Hyprland's drag
+        // controller needs a beat to fully let go. Gravity must start the
+        // instant the drag ends, or the window visibly hangs in place for
+        // those ticks before falling.
         if (body.grabbed) {
             body.idleTicks++;
-            if (body.idleTicks < releaseTicks)
-                continue; // still settling right after a drag, don't fight it yet
-            body.grabbed = false; // released: hand off to gravity with the last measured velocity
+            if (body.idleTicks >= releaseTicks)
+                body.grabbed = false; // released: hand off to gravity with the last measured velocity
         }
 
         if (body.asleep)
