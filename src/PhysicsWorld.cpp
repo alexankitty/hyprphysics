@@ -6,6 +6,8 @@
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/helpers/Monitor.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
+#include <hyprland/src/layout/target/WindowTarget.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -16,6 +18,27 @@ static Vector2D clampLen(const Vector2D& v, double maxLen) {
         return v;
     const double s = maxLen / len;
     return {v.x * s, v.y * s};
+}
+
+// Ground truth, not a heuristic: is the user *right now* interactively
+// moving or resizing this exact window via Hyprland's own drag controller?
+// Using this instead of inferring "did the position change" avoids the
+// one-frame lag a delta-based guess has — that lag was exactly what let
+// physics fight the drag and cause the wiggle/offset-from-cursor behavior.
+static bool isInteractivelyControlled(const PHLWINDOW& window) {
+    if (!g_layoutManager)
+        return false;
+
+    const auto& drag = g_layoutManager->dragController();
+    if (!drag || drag->mode() == MBIND_INVALID)
+        return false;
+
+    const auto target = drag->target();
+    if (!target || target->type() != Layout::TARGET_TYPE_WINDOW)
+        return false;
+
+    const auto windowTarget = dynamicPointerCast<Layout::CWindowTarget>(target);
+    return windowTarget && windowTarget->window() == window;
 }
 
 bool CPhysicsWorld::eligible(const PHLWINDOW& window) const {
@@ -248,11 +271,31 @@ void CPhysicsWorld::step() {
         const Vector2D goalPos = window->m_realPosition->goal();
         const Vector2D size    = window->m_realSize->goal();
 
+        // Ground truth first: if Hyprland's drag controller currently owns
+        // this window (interactive move or resize in progress), don't touch
+        // its position at all — just keep a running estimate of velocity in
+        // case the user throws it, for when the drag ends.
+        if (isInteractivelyControlled(window)) {
+            if (body.grabbed && dt > 0.0)
+                body.velocity = (goalPos - body.lastKnownPos) * (1.0 / dt);
+            else if (!body.grabbed)
+                body.velocity = {0, 0}; // just picked up: don't inherit a stale throw
+
+            body.lastKnownPos  = goalPos;
+            body.lastKnownSize = size;
+            body.grabbed       = true;
+            body.idleTicks     = 0;
+            body.asleep        = false;
+            continue;
+        }
+
         // Did something other than us move or resize this window since the
-        // last tick? (interactive drag/resize, a tiling layout, a workspace
-        // switch snapping it back, ...) A pure resize (edges dragged, no
-        // move) must count here too — otherwise gravity/bounds keep nudging
-        // the window mid-resize since its position alone hasn't changed.
+        // last tick? (a tiling layout, a workspace switch snapping it back,
+        // a dispatcher like movewindowpixel, ...) A pure resize (edges
+        // dragged, no move) must count here too — otherwise gravity/bounds
+        // keep nudging the window mid-resize since its position alone
+        // hasn't changed. This is a fallback for repositions that don't go
+        // through the drag controller above.
         const bool externallyMoved  = (goalPos - body.lastKnownPos).size() > 0.5;
         const bool externallyResized = (size - body.lastKnownSize).size() > 0.5;
 
