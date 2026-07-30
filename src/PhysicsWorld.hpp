@@ -13,10 +13,11 @@ struct SPhysicsBody {
     PHLWINDOWREF window;
 
     Vector2D     velocity   = {0, 0};
-    Vector2D     lastKnownPos; // the position we last wrote (or last saw the compositor write)
+    Vector2D     lastKnownPos;  // the position we last wrote (or last saw the compositor write)
+    Vector2D     lastKnownSize; // ditto, for size — a resize counts as "hands off" too
     bool         grabbed    = false; // true while an external actor (the user, a layout) is
-                                      // actively repositioning this window
-    int          idleTicks  = 0;     // ticks since the last external move, while grabbed
+                                      // actively repositioning/resizing this window
+    int          idleTicks  = 0;     // ticks since the last external move/resize, while grabbed
     bool         asleep     = false; // resting on the floor / another window, velocity ~ 0
     bool         initialised = false;
 };

@@ -29,6 +29,13 @@ bool CPhysicsWorld::eligible(const PHLWINDOW& window) const {
         return false;
     if (!window->m_workspace || !window->m_workspace->m_visible)
         return false;
+    // Grouped/tabbed windows all share the exact same geometry; the inactive
+    // tabs are just marked hidden rather than removed. Without this check
+    // every window in a group perfectly overlaps its tab-mates and the
+    // collision resolver "resolves" that every tick, i.e. a window fighting
+    // its own hidden tabs.
+    if (!window->visible())
+        return false;
 
     return true;
 }
@@ -54,8 +61,9 @@ void CPhysicsWorld::syncBody(PHLWINDOW window) {
         return; // already tracked
 
     SPhysicsBody body;
-    body.window       = window;
+    body.window        = window;
     body.lastKnownPos  = window->m_realPosition->goal();
+    body.lastKnownSize = window->m_realSize->goal();
     body.initialised   = true;
     m_bodies.push_back(body);
 }
@@ -240,17 +248,24 @@ void CPhysicsWorld::step() {
         const Vector2D goalPos = window->m_realPosition->goal();
         const Vector2D size    = window->m_realSize->goal();
 
-        // Did something other than us move this window since the last tick?
-        // (interactive drag, a tiling layout, a workspace switch snapping it back, ...)
-        const bool externallyMoved = (goalPos - body.lastKnownPos).size() > 0.5;
+        // Did something other than us move or resize this window since the
+        // last tick? (interactive drag/resize, a tiling layout, a workspace
+        // switch snapping it back, ...) A pure resize (edges dragged, no
+        // move) must count here too — otherwise gravity/bounds keep nudging
+        // the window mid-resize since its position alone hasn't changed.
+        const bool externallyMoved  = (goalPos - body.lastKnownPos).size() > 0.5;
+        const bool externallyResized = (size - body.lastKnownSize).size() > 0.5;
 
-        if (externallyMoved) {
-            if (dt > 0.0)
+        if (externallyMoved || externallyResized) {
+            if (dt > 0.0 && externallyMoved)
                 body.velocity = (goalPos - body.lastKnownPos) * (1.0 / dt);
-            body.lastKnownPos = goalPos;
-            body.grabbed      = true;
-            body.idleTicks    = 0;
-            body.asleep       = false;
+            else if (externallyResized)
+                body.velocity = {0, 0}; // resizing in place: don't carry over stale velocity
+            body.lastKnownPos  = goalPos;
+            body.lastKnownSize = size;
+            body.grabbed       = true;
+            body.idleTicks     = 0;
+            body.asleep        = false;
             continue; // let the other actor keep driving this tick; we just watched
         }
 
