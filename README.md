@@ -30,7 +30,7 @@ Hyprland source tree) plus a C++23 compiler.
 ### Via hyprpm (recommended)
 
 ```sh
-hyprpm add https://github.com/<you>/hyprphysics
+hyprpm add https://github.com/alexankitty/hyprphysics
 hyprpm enable hyprphysics
 ```
 
