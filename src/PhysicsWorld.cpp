@@ -224,8 +224,11 @@ void CPhysicsWorld::resolvePairs(double dt) {
             const double shareA = a.grabbed ? 0.0 : massB / totalMass;
             const double shareB = b.grabbed ? 0.0 : massA / totalMass;
 
-            const Vector2D newPosA = posA + normal * (push * shareA);
-            const Vector2D newPosB = posB - normal * (push * shareB);
+            // Round for the same reason as the gravity path above: what we
+            // write here must match what m_realPosition->goal() reports back
+            // next tick, or the externallyMoved check misfires on rounding noise.
+            const Vector2D newPosA = (posA + normal * (push * shareA)).round();
+            const Vector2D newPosB = (posB - normal * (push * shareB)).round();
 
             if (!a.grabbed) {
                 moveWindowTo(wa, newPosA, sizeA);
@@ -346,6 +349,12 @@ void CPhysicsWorld::step() {
 
         Vector2D newPos = goalPos + body.velocity * dt;
         resolveBounds(body, newPos, size);
+        // Hyprland snaps window positions to whole pixels, so round before
+        // writing: otherwise we store the unrounded float here while the
+        // compositor reports back a rounded value next tick, and the
+        // externallyMoved sub-pixel mismatch is misread as someone else
+        // moving the window — causing a velocity/grabbed flip-flop (jiggle).
+        newPos = newPos.round();
 
         if (newPos != goalPos)
             moveWindowTo(window, newPos, size);
