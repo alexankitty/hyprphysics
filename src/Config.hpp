@@ -11,6 +11,7 @@ struct SPhysicsConfig {
     SP<Config::Values::CBoolValue>  enabled;
     SP<Config::Values::CBoolValue>  collisions;
     SP<Config::Values::CBoolValue>  affectTiled;
+    SP<Config::Values::CBoolValue>  monitorTraversal; // let windows fall/bounce across monitor edges instead of stopping at them
     SP<Config::Values::CFloatValue> gravity;        // px/s^2
     SP<Config::Values::CFloatValue> restitution;    // 0..1, bounciness
     SP<Config::Values::CFloatValue> friction;       // 0..1 retained per second

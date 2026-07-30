@@ -75,6 +75,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_config.enabled          = makeShared<Config::Values::CBoolValue>("plugin:physics:enabled", "master on/off switch", true);
     g_config.collisions       = makeShared<Config::Values::CBoolValue>("plugin:physics:collisions", "let windows push each other around", true);
     g_config.affectTiled      = makeShared<Config::Values::CBoolValue>("plugin:physics:affect_tiled", "also simulate tiled windows (rarely wanted)", false);
+    g_config.monitorTraversal = makeShared<Config::Values::CBoolValue>("plugin:physics:monitor_traversal", "let windows fall/bounce across monitor edges instead of stopping at their own monitor's bounds", false);
     g_config.gravity          = makeShared<Config::Values::CFloatValue>("plugin:physics:gravity", "downward acceleration, px/s^2", 1400.F,
                                                                         Config::Values::SFloatValueOptions{.min = 0.F, .max = 20000.F});
     g_config.restitution      = makeShared<Config::Values::CFloatValue>("plugin:physics:restitution", "bounciness on impact, 0..1", 0.45F,
@@ -93,6 +94,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.enabled);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.collisions);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.affectTiled);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_config.monitorTraversal);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.gravity);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.restitution);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_config.friction);

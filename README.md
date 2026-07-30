@@ -72,6 +72,7 @@ either config language — set whichever one matches your `hyprland.conf` /
 | `enabled` | `true` | Master on/off switch |
 | `collisions` | `true` | Let windows push each other around |
 | `affect_tiled` | `false` | Also simulate tiled windows (rarely wanted) |
+| `monitor_traversal` | `false` | Let windows fall/bounce across monitor edges instead of stopping at their own monitor's bounds |
 | `gravity` | `1400` | Downward acceleration, px/s² |
 | `restitution` | `0.45` | Bounciness on impact, 0..1 |
 | `friction` | `0.86` | Velocity retained per second, 0..1 |
@@ -145,6 +146,11 @@ hyprctl dispatch physics:throw "0 -1200"
 - Collision response is a simple AABB/impulse model, not a real rigid-body
   solver — good enough for satisfying bounces, not for anything that needs
   to be physically exact.
+- `monitor_traversal` only relaxes the position bounds — it doesn't reassign
+  which monitor/workspace a window belongs to as it drifts across a seam.
+  Hyprland's own window-monitor tracking is workspace-driven, not
+  position-driven, so how a straddling window renders once it's mostly over
+  the neighboring screen depends on Hyprland itself, not this plugin.
 - This targets Hyprland's current (git `main`) plugin API. Plugin ABI is
   explicitly unstable between Hyprland releases, so you'll need to rebuild
   against the headers matching whatever Hyprland version you run — `hyprpm`

@@ -3,6 +3,7 @@
 #include "PhysicsWorld.hpp"
 #include "Config.hpp"
 
+#include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/helpers/Monitor.hpp>
@@ -18,6 +19,31 @@ static Vector2D clampLen(const Vector2D& v, double maxLen) {
         return v;
     const double s = maxLen / len;
     return {v.x * s, v.y * s};
+}
+
+// Bounding box spanning every enabled monitor, in absolute layout px. Used as
+// the "walls" instead of a single monitor's box when monitor_traversal lets
+// windows drift from one screen onto another.
+static bool combinedMonitorsBox(CBox& out) {
+    bool first = false;
+    for (const auto& m : g_pCompositor->m_monitors) {
+        if (!m->m_enabled)
+            continue;
+
+        const Vector2D tl = m->m_position;
+        const Vector2D br = m->m_position + m->m_size;
+
+        if (!first) {
+            out   = CBox{tl, br - tl};
+            first = true;
+            continue;
+        }
+
+        const Vector2D newTl = {std::min(out.x, tl.x), std::min(out.y, tl.y)};
+        const Vector2D newBr = {std::max(out.x + out.w, br.x), std::max(out.y + out.h, br.y)};
+        out                  = CBox{newTl, newBr - newTl};
+    }
+    return first;
 }
 
 // Ground truth, not a heuristic: is the user *right now* interactively
@@ -148,13 +174,18 @@ bool CPhysicsWorld::resolveBounds(SPhysicsBody& body, Vector2D& pos, const Vecto
     if (!window || !window->m_monitor)
         return false;
 
-    const auto monitor     = window->m_monitor.lock();
     const auto restitution = std::clamp((double)g_config.restitution->value(), 0.0, 1.0);
 
-    const double left   = monitor->m_position.x;
-    const double top    = monitor->m_position.y;
-    const double right  = monitor->m_position.x + monitor->m_size.x - size.x;
-    const double bottom = monitor->m_position.y + monitor->m_size.y - size.y;
+    CBox wallsBox;
+    if (!g_config.monitorTraversal->value() || !combinedMonitorsBox(wallsBox)) {
+        const auto monitor = window->m_monitor.lock();
+        wallsBox           = CBox{monitor->m_position, monitor->m_size};
+    }
+
+    const double left   = wallsBox.x;
+    const double top    = wallsBox.y;
+    const double right  = wallsBox.x + wallsBox.w - size.x;
+    const double bottom = wallsBox.y + wallsBox.h - size.y;
 
     if (pos.x < left) {
         pos.x           = left;
@@ -195,7 +226,12 @@ void CPhysicsWorld::resolvePairs(double dt) {
             if (!wb)
                 continue;
 
-            if (wa->m_monitor.lock() != wb->m_monitor.lock())
+            // Windows on different monitors can never overlap in absolute
+            // layout px anyway (monitors don't share screen space), except
+            // when monitor_traversal lets a body's box straddle the seam
+            // between two adjacent monitors — so only skip the pair when
+            // traversal is off, as a cheap early-out for the common case.
+            if (!g_config.monitorTraversal->value() && wa->m_monitor.lock() != wb->m_monitor.lock())
                 continue;
 
             auto&          a     = m_bodies[i];
