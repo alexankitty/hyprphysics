@@ -47,7 +47,7 @@ class CPhysicsWorld {
   private:
     SPhysicsBody*                        find(PHLWINDOW window);
     bool                                 eligible(const PHLWINDOW& window) const;
-    void                                 resolveBounds(SPhysicsBody& body, Vector2D& pos, const Vector2D& size);
+    bool                                 resolveBounds(SPhysicsBody& body, Vector2D& pos, const Vector2D& size);
     void                                 resolvePairs(double dt);
 
     std::vector<SPhysicsBody>            m_bodies;

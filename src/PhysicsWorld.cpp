@@ -139,10 +139,14 @@ void CPhysicsWorld::stopAll() {
     }
 }
 
-void CPhysicsWorld::resolveBounds(SPhysicsBody& body, Vector2D& pos, const Vector2D& size) {
+// Returns true if the body is resting on the floor this tick (only then is
+// falling asleep in step() appropriate — mid-arc, gravity naturally drives
+// vertical speed through ~0 at the apex, and sleeping there would freeze the
+// window in mid-air instead of letting it fall back down).
+bool CPhysicsWorld::resolveBounds(SPhysicsBody& body, Vector2D& pos, const Vector2D& size) {
     const auto window = body.window.lock();
     if (!window || !window->m_monitor)
-        return;
+        return false;
 
     const auto monitor     = window->m_monitor.lock();
     const auto restitution = std::clamp((double)g_config.restitution->value(), 0.0, 1.0);
@@ -160,17 +164,21 @@ void CPhysicsWorld::resolveBounds(SPhysicsBody& body, Vector2D& pos, const Vecto
         body.velocity.x = -body.velocity.x * restitution;
     }
 
+    bool grounded = false;
     if (pos.y < top) {
         pos.y           = top;
         body.velocity.y = -body.velocity.y * restitution;
     } else if (pos.y > bottom) {
         pos.y           = bottom;
         body.velocity.y = -body.velocity.y * restitution;
+        grounded        = true;
 
         // resting on the floor: kill vertical jitter once it is basically zero
         if (std::fabs(body.velocity.y) < g_config.sleepVelocity->value())
             body.velocity.y = 0;
     }
+
+    return grounded;
 }
 
 void CPhysicsWorld::resolvePairs(double dt) {
@@ -347,8 +355,8 @@ void CPhysicsWorld::step() {
         body.velocity = body.velocity * frictionThisTick;
         body.velocity = clampLen(body.velocity, maxVel);
 
-        Vector2D newPos = goalPos + body.velocity * dt;
-        resolveBounds(body, newPos, size);
+        Vector2D newPos     = goalPos + body.velocity * dt;
+        const bool grounded = resolveBounds(body, newPos, size);
         // Hyprland snaps window positions to whole pixels, so round before
         // writing: otherwise we store the unrounded float here while the
         // compositor reports back a rounded value next tick, and the
@@ -360,7 +368,7 @@ void CPhysicsWorld::step() {
             moveWindowTo(window, newPos, size);
         body.lastKnownPos = newPos;
 
-        if (body.velocity.size() < sleepVel)
+        if (grounded && body.velocity.size() < sleepVel)
             body.asleep = true;
     }
 
