@@ -3,7 +3,7 @@
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/desktop/state/WindowState.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/Compositor.hpp>
 #include <hyprutils/string/VarList.hpp>
 
@@ -19,8 +19,12 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
 }
 
-static void registerAllExistingWindows() {
-    for (const auto& w : Desktop::windowState()->windows())
+// There's no "floating toggled" / "tiled -> floating" event on this Hyprland
+// version, so instead of trying to catch every state transition individually
+// we just resync against the full window list once a tick. syncBody() is a
+// cheap no-op for windows that are already tracked and already eligible.
+static void rescanWindows() {
+    for (const auto& w : g_pCompositor->m_windows)
         g_physicsWorld.syncBody(w);
 }
 
@@ -30,7 +34,7 @@ static SDispatchResult dispatchThrow(std::string arg) {
     if (args.size() < 2)
         return {.success = false, .error = "usage: physics:throw <vx> <vy>"};
 
-    const auto window = g_pCompositor->m_lastWindow.lock();
+    const auto window = Desktop::focusState()->window();
     if (!window)
         return {.success = false, .error = "no active window"};
 
@@ -101,18 +105,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "physics:toggle", dispatchToggle);
     HyprlandAPI::addDispatcherV2(PHANDLE, "physics:stop", dispatchStop);
 
-    static auto P_TICK       = Event::bus()->m_events.tick.listen([&] { g_physicsWorld.step(); });
-    static auto P_OPEN       = Event::bus()->m_events.window.openLate.listen([&](PHLWINDOW w) { g_physicsWorld.syncBody(w); });
-    static auto P_CLOSE      = Event::bus()->m_events.window.close.listen([&](PHLWINDOW w) { g_physicsWorld.removeBody(w); });
-    static auto P_DESTROY    = Event::bus()->m_events.window.destroy.listen([&](PHLWINDOWREF w) {
-        if (const auto win = w.lock())
-            g_physicsWorld.removeBody(win);
+    static auto P_TICK    = Event::bus()->m_events.tick.listen([&] {
+        rescanWindows();
+        g_physicsWorld.step();
     });
-    static auto P_FLOATING   = Event::bus()->m_events.window.floating.listen([&](PHLWINDOW w) { g_physicsWorld.syncBody(w); });
-    static auto P_FULLSCREEN = Event::bus()->m_events.window.fullscreen.listen([&](PHLWINDOW w) { g_physicsWorld.syncBody(w); });
-    static auto P_WORKSPACE  = Event::bus()->m_events.window.moveToWorkspace.listen([&](PHLWINDOW w, PHLWORKSPACE) { g_physicsWorld.syncBody(w); });
+    static auto P_OPEN    = Event::bus()->m_events.window.open.listen([&](PHLWINDOW w) { g_physicsWorld.syncBody(w); });
+    static auto P_CLOSE   = Event::bus()->m_events.window.close.listen([&](PHLWINDOW w) { g_physicsWorld.removeBody(w); });
+    static auto P_DESTROY = Event::bus()->m_events.window.destroy.listen([&](PHLWINDOW w) { g_physicsWorld.removeBody(w); });
 
-    registerAllExistingWindows();
+    rescanWindows();
 
     return {"hyprphysics", "Gravity, bouncing, and throwable windows for Hyprland", "Claude", "0.1"};
 }
